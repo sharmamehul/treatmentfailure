@@ -170,15 +170,5 @@ pval_glm_func <- function(y) summary(lm(y ~ Treatmentfailureiechangeindiureticty
 unadj_bin_pval <- lapply(new_data[,86:89], pval_glm_func)
 write.csv(unadj_bin_pval, "adj_oddsratioTreatfail_outcomes_nonbinary_pval.csv")
 
-
 ```
 
-## Including Plots
-
-You can also embed plots, for example:
-
-```{r pressure, echo=FALSE}
-plot(pressure)
-```
-
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
