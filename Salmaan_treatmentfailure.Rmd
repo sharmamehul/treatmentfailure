@@ -1,0 +1,189 @@
+---
+title: "Salmaan_treatmentfailure"
+author: "mehul"
+date: "24/05/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+setwd("C:/AMA/extra/AIMS/Salman Mumtaz project/Dose multiplier/treatmentfailure")
+library(dplyr)
+library(readxl)
+library(mediation)
+require(lavaan)
+library(tidyverse)
+library(caret)
+library(leaps)
+library(MASS)
+library(ROCR)
+library(robust)
+
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+
+treat_fail <- glm(treatfail_60days$`Death binary (60 day)` ~ treatfail_60days$Treatmentfail_bin, family = "binomial")
+summary(treat_fail)
+
+other_vars <- lm(treatfail_60days$weight_change ~ treatfail_60days$Treatmentfail_bin)
+summary(other_vars)
+
+diureticdose <- glm(treatfail_60days$Treatmentfail_bin ~ treatfail_60days$Initialhospitaldiureticdose, family = "binomial")
+summary(diureticdose)
+
+# Generate data
+set.seed(200)  # Set seed for reproducibility
+data.i <- as.data.frame(treat_fail_predictors_new_with_outcomes)
+
+#univariate
+#get odds ratios with confidence intervals
+glm_func <- function(y) exp(cbind(coef(glm(Treatmentfailureiechangeindiuretictypordosee ~ y, data = data.i, family = binomial)), confint(glm(Treatmentfailureiechangeindiuretictypordosee ~ y, data = data.i, family = binomial))))[2,]
+univars <- lapply(data.i[,1:60], glm_func)
+write.csv(univars, "treatfail_univars.csv")
+
+#get pval for each regression
+pval_glm_func <- function(y) summary(glm(Treatmentfailureiechangeindiuretictypordosee ~ y, data = data.i, family = binomial))$coefficients[2,4]
+univars <- lapply(data.i[,1:60], pval_glm_func)
+write.csv(univars, "treatfail_univars_pvals.csv")
+
+
+#stepwise for multivariate model
+sample_size = floor(0.7*nrow(data.i))
+picked = sample(seq_len(nrow(data.i)),size = sample_size)
+train =data.i[picked,]
+
+train <- train[, c(3:64)]
+holdout =data.i[-picked,]
+holdout <- holdout[, c(3:64)]
+holdout <- as.data.frame(holdout)
+
+library(pROC)
+
+#stepwise
+#pick only variables with p>0.5 from univariate
+
+model <- glm(Treatmentfailureiechangeindiuretictypordosee ~ BaselineBUN + Baselinecreatinine + PHTN + BaselineeGFR +
+               Homediuretic3torsemide + Tricuspidregurgitation + Initialhospitaldiureticdose + SBPonadmission + HLD +
+               Homediureticdosing + Baselinepotassium + ICD + RVcontraction + BaselineBNP + HTN + Baselinetroponin + ACEARB +
+               Initialhospitaldiuretic2bumetanide + BB + EF + MRA + Gender + Baselinelymphocyte +Initialhospitaldiuretic1furosemide +
+               Activesmoker + DBPonadmission + Aorticregurgitation + Cerebrovasculardisease + Homediuretic0none + Insulin +
+               Thiazides + Mitralregurgitation + Baselineneutrophil + Weight + Homediuretic2bumetanide, data = train,
+             family = binomial)
+summary(model)
+step <- stepAIC(model, direction = "both", trace = FALSE)
+step
+glm.probs <- predict(model, newdata = holdout, type = "response")
+pred <- prediction(glm.probs, holdout$Treatmentfailureiechangeindiuretictypordosee)
+
+x <- as.data.frame(holdout$Treatmentfailureiechangeindiuretictypordosee)
+y <- as.data.frame(pred@predictions)
+z <- as.data.frame(c(x,y))
+colnames(z) <- c('x', 'y')
+
+rc_curve <- pROC::roc(z,x,y)
+cc_trian <- coords(rc_curve, "best", ret=c("threshold", "specificity", "sensitivity", "accuracy", "precision", "recall"), transpose = FALSE)
+cc_train
+
+cc1 <- coords(rc_curve, 0.0523859, input="threshold", ret=c("threshold", "specificity", "sensitivity", "accuracy", "precision", "recall"), transpose = FALSE)
+cc1
+
+perf <- performance(pred,"tpr","fpr")
+plot(perf)
+abline(a=0, b= 1)
+auc <- performance(pred, measure = "auc")
+auc <- auc@y.values[[1]]
+auc
+
+x <- glm(formula = Treatmentfailureiechangeindiuretictypordosee ~ 
+    BaselineBUN + Tricuspidregurgitation + Initialhospitaldiureticdose + 
+        ICD + HTN + Baselinetroponin + Initialhospitaldiuretic2bumetanide + 
+        BB + MRA + Gender + Weight, family = binomial, data = train)
+summary(x)
+
+exps <- exp(cbind(coef(x), confint(x)))
+write.csv(exps, "multivar_oddsratio.csv")
+
+#use major outcomes, adjusted for variables in mutlivariate model
+new_data <- as.data.frame(treat_fail_predictors_new_with_outcomes)
+death_treatfail <- glm(new_data$Reshosp_bin_60 ~ Treatmentfailureiechangeindiuretictypordosee, data = new_data, family = binomial)
+
+#get unadjusted OR for various binary outcomes
+glm_func <- function(y) exp(cbind(coef(glm(y ~ Treatmentfailureiechangeindiuretictypordosee, data = new_data, family = binomial)), confint(glm(y ~ Treatmentfailureiechangeindiuretictypordosee, data = new_data, family = binomial))))[2,]
+unadj_bin <- lapply(new_data[,77:85], glm_func)
+write.csv(unadj_bin, "oddsratioTreatfail_outcomes_binary.csv")
+
+#get pval for each regression binary outcomes
+pval_glm_func <- function(y) summary(glm(y ~ Treatmentfailureiechangeindiuretictypordosee, data = new_data, family = binomial))$coefficients[2,4]
+unadj_bin_pval <- lapply(new_data[,77:85], pval_glm_func)
+write.csv(unadj_bin_pval, "oddsratioTreatfail_outcomes_binary_pval.csv")
+
+#get unadjusted OR for various non-binary outcomes
+glm_func <- function(y) exp(cbind(coef(lm(y ~ Treatmentfailureiechangeindiuretictypordosee, data = new_data)), confint(lm(y ~ Treatmentfailureiechangeindiuretictypordosee, data = new_data))))[2,]
+unadj_bin <- lapply(new_data[,86:89], glm_func)
+write.csv(unadj_bin, "oddsratioTreatfail_outcomes_nonbinary.csv")
+
+#get pval for each regression non-binary outcomes
+pval_glm_func <- function(y) summary(lm(y ~ Treatmentfailureiechangeindiuretictypordosee, data = new_data))$coefficients[2,4]
+unadj_bin_pval <- lapply(new_data[,86:89], pval_glm_func)
+write.csv(unadj_bin_pval, "oddsratioTreatfail_outcomes_nonbinary_pval.csv")
+
+
+summary(death_treatfail)
+mod_adj <- glm(`Death binary (60 day)` ~ Treatmentfailureiechangeindiuretictypordosee + BaselineBUN + Tricuspidregurgitation +
+                 Initialhospitaldiureticdose + ICD + HTN + Baselinetroponin + Initialhospitaldiuretic2bumetanide + BB +
+                 MRA + Gender + Weight, data = new_data, family = binomial)
+
+summary(mod_adj)
+
+
+#get adjusted OR for various binary outcomes
+glm_func <- function(y) exp(cbind(coef(glm(y ~ Treatmentfailureiechangeindiuretictypordosee + BaselineBUN + Tricuspidregurgitation +
+                 Initialhospitaldiureticdose + ICD + HTN + Baselinetroponin + Initialhospitaldiuretic2bumetanide + BB +
+                 MRA + Gender + Weight, data = new_data, family = binomial)), confint(glm(y ~ Treatmentfailureiechangeindiuretictypordosee + BaselineBUN + Tricuspidregurgitation +
+                 Initialhospitaldiureticdose + ICD + HTN + Baselinetroponin + Initialhospitaldiuretic2bumetanide + BB +
+                 MRA + Gender + Weight, data = new_data, family = binomial))))[2,]
+unadj_bin <- lapply(new_data[,77:85], glm_func)
+write.csv(unadj_bin, "adj_oddsratioTreatfail_outcomes_binary.csv")
+
+#get pval for each regression binary outcomes
+pval_glm_func <- function(y) summary(glm(y ~ Treatmentfailureiechangeindiuretictypordosee + BaselineBUN + Tricuspidregurgitation +
+                 Initialhospitaldiureticdose + ICD + HTN + Baselinetroponin + Initialhospitaldiuretic2bumetanide + BB +
+                 MRA + Gender + Weight, data = new_data, family = binomial))$coefficients[2,4]
+unadj_bin_pval <- lapply(new_data[,77:85], pval_glm_func)
+write.csv(unadj_bin_pval, "adj_oddsratioTreatfail_outcomes_binary_pval.csv")
+
+#get adjusted OR for various non-binary outcomes
+glm_func <- function(y) exp(cbind(coef(lm(y ~ Treatmentfailureiechangeindiuretictypordosee + BaselineBUN + Tricuspidregurgitation +
+                 Initialhospitaldiureticdose + ICD + HTN + Baselinetroponin + Initialhospitaldiuretic2bumetanide + BB +
+                 MRA + Gender + Weight, data = new_data)), confint(lm(y ~ Treatmentfailureiechangeindiuretictypordosee + BaselineBUN + Tricuspidregurgitation +
+                 Initialhospitaldiureticdose + ICD + HTN + Baselinetroponin + Initialhospitaldiuretic2bumetanide + BB +
+                 MRA + Gender + Weight, data = new_data))))[2,]
+unadj_bin <- lapply(new_data[,86:89], glm_func)
+write.csv(unadj_bin, "adj_oddsratioTreatfail_outcomes_nonbinary.csv")
+
+#get pval for each regression non-binary outcomes
+pval_glm_func <- function(y) summary(lm(y ~ Treatmentfailureiechangeindiuretictypordosee + BaselineBUN + Tricuspidregurgitation +
+                 Initialhospitaldiureticdose + ICD + HTN + Baselinetroponin + Initialhospitaldiuretic2bumetanide + BB +
+                 MRA + Gender + Weight, data = new_data))$coefficients[2,4]
+unadj_bin_pval <- lapply(new_data[,86:89], pval_glm_func)
+write.csv(unadj_bin_pval, "adj_oddsratioTreatfail_outcomes_nonbinary_pval.csv")
+
+
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
